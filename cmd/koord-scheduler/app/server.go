@@ -315,32 +315,38 @@ func WithPlugin(name string, factory runtime.PluginFactory) Option {
 
 // Setup creates a completed config and a scheduler based on the command args and options
 func Setup(ctx context.Context, opts *options.Options, schedulingHooks []frameworkext.SchedulingPhaseHook, outOfTreeRegistryOptions ...Option) (*schedulerserverconfig.CompletedConfig, *scheduler.Scheduler, error) {
+	// 初始化 kube-scheduler 配置
 	if cfg, err := latest.Default(); err != nil {
 		return nil, nil, err
 	} else {
 		opts.ComponentConfig = cfg
 	}
 
+	// 校验调度插件配置
 	if errs := opts.Validate(); len(errs) > 0 {
 		return nil, nil, utilerrors.NewAggregate(errs)
 	}
 
+	// 获取调度器启动依赖配置项，比如：官方框架依赖配置、koordinator 客户端/informer、gin 引擎
 	c, err := opts.Config()
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Get the completed config
+	// mutating 调度器启动配置
 	cc := c.Complete()
 
 	// NOTE(joseph): K8s scheduling framework does not provide extension point for initialization.
 	// Currently, only by copying the initialization code and implementing custom initialization.
+	// 初始化自定义控制器
 	extendedHandle := frameworkext.NewExtendedHandle(
 		frameworkext.WithServicesEngine(cc.ServicesEngine),
 		frameworkext.WithKoordinatorClientSet(cc.KoordinatorClient),
 		frameworkext.WithKoordinatorSharedInformerFactory(cc.KoordinatorSharedInformerFactory),
 	)
 
+	// 初始化自定义控制器过滤器
 	outOfTreeRegistry := make(runtime.Registry)
 	for _, option := range outOfTreeRegistryOptions {
 		if err := option(extendedHandle, outOfTreeRegistry); err != nil {
@@ -348,9 +354,12 @@ func Setup(ctx context.Context, opts *options.Options, schedulingHooks []framewo
 		}
 	}
 
+	// 初始化 event record 客户端，主要后续用于新增 k8s 资源事件
 	recorderFactory := getRecorderFactory(&cc)
+
 	completedProfiles := make([]kubeschedulerconfig.KubeSchedulerProfile, 0)
 	// Create the scheduler.
+	// 初始化官方调度器
 	sched, err := scheduler.New(cc.Client,
 		cc.InformerFactory,
 		recorderFactory,
@@ -381,6 +390,7 @@ func Setup(ctx context.Context, opts *options.Options, schedulingHooks []framewo
 	//  such as replacing some interfaces in Scheduler to implement custom logic
 
 	// extend framework to hook run plugin functions
+	// 注册自定义过滤器插件到调度器 hook 点
 	extendedFrameworkFactory := frameworkext.NewFrameworkExtenderFactory(extendedHandle, schedulingHooks...)
 	for k, v := range sched.Profiles {
 		sched.Profiles[k] = extendedFrameworkFactory.New(v)
