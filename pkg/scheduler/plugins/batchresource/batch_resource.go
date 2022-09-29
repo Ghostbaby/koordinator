@@ -54,6 +54,7 @@ func (p *Plugin) Name() string {
 func (p *Plugin) Filter(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, nodeInfo *framework.NodeInfo) *framework.Status {
 	insufficientResources := fitsRequest(pod, nodeInfo)
 
+	// 如果发现当前 pod 资源申请超过 node 剩余资源，则剔除当前 node
 	if len(insufficientResources) != 0 {
 		// We will keep all failure reasons.
 		failureReasons := make([]string, 0, len(insufficientResources))
@@ -65,15 +66,22 @@ func (p *Plugin) Filter(ctx context.Context, state *framework.CycleState, pod *c
 	return nil
 }
 
+// fitsRequest 用于校验 batch 类型 pod 资源
 func fitsRequest(pod *corev1.Pod, nodeInfo *framework.NodeInfo) []resschedplug.InsufficientResource {
+	// 计算当前 pod batch 类型资源
 	podBatchRequest := computePodBatchRequest(pod)
+	// 如果 pod resource 配置不包含 batch 配置，则直接跳过
 	if podBatchRequest.MilliCPU == 0 && podBatchRequest.Memory == 0 {
 		return nil
 	}
 
 	insufficientResources := make([]resschedplug.InsufficientResource, 0, 2)
+	// 从 node 状态中获取当前 batch 类型 pod 已申请资源
 	nodeRequested := computeNodeBatchRequested(nodeInfo)
+	// 从 node 状态中获取预留 batch 类型 pod 资源总数
 	nodeAllocatable := computeNodeBatchAllocatable(nodeInfo)
+
+	// 如果当前 pod 申请资源超过当前节点为 batch 类型 pod 预留资源，则判定为资源溢出
 	if podBatchRequest.MilliCPU > (nodeAllocatable.MilliCPU - nodeRequested.MilliCPU) {
 		insufficientResources = append(insufficientResources, resschedplug.InsufficientResource{
 			ResourceName: apiext.BatchCPU,
@@ -138,21 +146,24 @@ func computeNodeBatchRequested(nodeInfo *framework.NodeInfo) *batchResource {
 	return nodeRequested
 }
 
-// computePodBERequest returns the total non-zero best-effort requests. If Overhead is defined for the pod and
+// computePodBatchRequest returns the total non-zero best-effort requests. If Overhead is defined for the pod and
 // the PodOverhead feature is enabled, the Overhead is added to the result.
 // podBERequest = max(sum(podSpec.Containers), podSpec.InitContainers) + overHead
 func computePodBatchRequest(pod *corev1.Pod) *batchResource {
 	podRequest := &framework.Resource{}
+	// 统计所有容器资源配置，包括 cpu/mem
 	for _, container := range pod.Spec.Containers {
 		podRequest.Add(container.Resources.Requests)
 	}
 
 	// take max_resource(sum_pod, any_init_container)
+	// 获取初始化容器资源配置，如果大于上一步计算结果，则覆盖现在资源配置
 	for _, container := range pod.Spec.InitContainers {
 		podRequest.SetMaxResource(container.Resources.Requests)
 	}
 
 	// If Overhead is being utilized, add to the total requests for the pod
+	// 如果 Overhead 特性开启，则需要将 Overhead 资源追加到 pod 资源
 	if pod.Spec.Overhead != nil {
 		podRequest.Add(pod.Spec.Overhead)
 	}
@@ -162,12 +173,14 @@ func computePodBatchRequest(pod *corev1.Pod) *batchResource {
 		Memory:   0,
 	}
 	// compatible with old format, overwrite BatchCPU, BatchMemory if exist
+	// 从 pod 资源配置中获取自定义资源，此处存在两个版本自定义资源名称，所以此处需要每种资源获取两次
 	if koordBatchCPU, exist := podRequest.ScalarResources[apiext.KoordBatchCPU]; exist {
 		result.MilliCPU = koordBatchCPU
 	}
 	if koordBatchMemory, exist := podRequest.ScalarResources[apiext.KoordBatchMemory]; exist {
 		result.Memory = koordBatchMemory
 	}
+
 	if batchCPU, exist := podRequest.ScalarResources[apiext.BatchCPU]; exist {
 		result.MilliCPU = batchCPU
 	}
