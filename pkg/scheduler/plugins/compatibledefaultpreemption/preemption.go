@@ -41,6 +41,7 @@ type CompatibleDefaultPreemption struct {
 }
 
 func New(dpArgs runtime.Object, fh framework.Handle) (framework.Plugin, error) {
+	// 如果调度抢占启动参数为空，则生成缺省参数
 	if dpArgs == nil {
 		defaultPreemptionArgs, err := getDefaultPreemptionArgs()
 		if err != nil {
@@ -48,21 +49,26 @@ func New(dpArgs runtime.Object, fh framework.Handle) (framework.Plugin, error) {
 		}
 		dpArgs = defaultPreemptionArgs
 	} else {
+		// 获取抢占参数
 		unknownObj, ok := dpArgs.(*runtime.Unknown)
 		if !ok {
 			return nil, fmt.Errorf("got args of type %T, want *DefaultPreemptionArgs", dpArgs)
 		}
 
+		// 生成缺省参数
 		defaultPreemptionArgs, err := getDefaultPreemptionArgs()
 		if err != nil {
 			return nil, err
 		}
+
+		// 使用当前配置覆盖缺省参数
 		if err := frameworkruntime.DecodeInto(unknownObj, defaultPreemptionArgs); err != nil {
 			return nil, err
 		}
 		dpArgs = defaultPreemptionArgs
 	}
 
+	// 此处主要用于兼容 kube 1.18~1.20 版本，需要关闭 EnablePodDisruptionBudget 特性
 	fts := plfeature.Features{
 		EnablePodAffinityNamespaceSelector: feature.DefaultFeatureGate.Enabled(features.PodAffinityNamespaceSelector),
 		EnablePodOverhead:                  feature.DefaultFeatureGate.Enabled(features.PodOverhead),
@@ -70,6 +76,7 @@ func New(dpArgs runtime.Object, fh framework.Handle) (framework.Plugin, error) {
 		EnablePodDisruptionBudget:          false, // kube version <= 1.20 disable the feature
 	}
 
+	// 创建 kube-scheduler 默认抢占插件
 	plg, err := defaultpreemption.New(dpArgs, fh, fts)
 	if err != nil {
 		return nil, err
@@ -84,6 +91,7 @@ func (plg *CompatibleDefaultPreemption) Name() string {
 	return Name
 }
 
+// getDefaultPreemptionArgs 生成 kube-scheduler 默认调度抢占插件缺省启动参数
 func getDefaultPreemptionArgs() (*scheduledconfig.DefaultPreemptionArgs, error) {
 	var v1beta2args scheduledconfigv1beta2config.DefaultPreemptionArgs
 	v1beta2.SetDefaults_DefaultPreemptionArgs(&v1beta2args)
