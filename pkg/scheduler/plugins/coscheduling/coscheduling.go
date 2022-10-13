@@ -142,6 +142,11 @@ func (cs *Coscheduling) Name() string {
 // Firstly, compare the priorities of the two pods, the higher priority (if pod's priority is equal,then compare their KoordinatorPriority at labels )is at the front of the queue,
 // Secondly, compare creationTimestamp of two pods, if pod belongs to a Gang, then we compare creationTimestamp of the Gang, the one created first will be at the front of the queue.
 // Finally, compare pod's namespace, if pod belongs to a Gang, then we compare Gang name.
+
+// Less 用于在下一次对现有调度队列中的 pod 进行重新排序
+// 1. 比较两个 pod 的优先级配置，优先级越高的 pod 优先入队。
+// 2. 比较两个 pod 的创建时间戳，如果 pod 归属于同一个 Gang 配置，我们比较 Gang 配置创建时间，谁先创建则优先入队。
+// 3. 比较 pod 的 namespace，如果 pod 归属某一个 Gang 配置，则比较 Gang 名称。
 func (cs *Coscheduling) Less(podInfo1, podInfo2 *framework.QueuedPodInfo) bool {
 	prio1 := corev1helpers.PodPriority(podInfo1.Pod)
 	prio2 := corev1helpers.PodPriority(podInfo2.Pod)
